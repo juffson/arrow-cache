@@ -1,0 +1,16 @@
+[package]
+name = "cache"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+datafusion = "41.0.0"
+async-trait = "0.1.75"
+anyhow = "1.0.69"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = "0.4.31"
+clickhouse-rs = { git = "https://github.com/suharev7/clickhouse-rs.git", branch = "async-await" }
+futures = "0.3.30"
+arrow = "52.2.0"

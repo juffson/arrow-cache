@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+ "cache",
+]
+
+[workspace.dependencies]
+# crates.io
+tracing = { version = "0.1.40", features = ["log"] }
+chrono = "0.4.31"
+anyhow = "1.0.69"
+tokio = { version = "1", features = ["full"] }
