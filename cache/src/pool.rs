@@ -51,7 +51,7 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
         // TODO support clickhouse
         let provider = Arc::new(ClickHouseTableProvider::new()) as Arc<dyn TableProvider>;
         // not sync data
-        //let df = context.read_table(provider)?;
+        let _ = context.read_table(provider)?;
         Ok(())
     }
 
@@ -73,10 +73,7 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
     pub async fn insert(&self, sql: &str) -> Result<()> {
         self.execute(sql).await
     }
-    //pub async fn query(&self, sql: &str) -> Result<DataFrame> {
-    //    let context = self.ctx.read().await;
-    //    Ok(())
-    //}
+
     pub async fn execute(&self, sql: &str) -> Result<()> {
         let context = self.ctx.write().await;
         context.sql(sql).await?.collect().await?;
@@ -93,7 +90,6 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
 mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
-    use std::time::Duration;
 
     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
     struct CustomValue {
@@ -137,7 +133,7 @@ mod tests {
             .await?;
 
         // Query data
-        let result = db.execute("SELECT * FROM test_table").await?;
+        let _ = db.execute("SELECT * FROM test_table").await?;
 
         // Add assertions here to check the result
 
@@ -171,7 +167,7 @@ mod tests {
         db.insert("INSERT INTO test_table VALUES ('key1', 'value1', 1234567890, false)")
             .await?;
 
-        let df = db
+        let _df = db
             .query("SELECT * FROM test_table WHERE key = 'key1'")
             .await?;
 
