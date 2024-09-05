@@ -1,7 +1,9 @@
 use crate::ck::ClickHouseTableProvider;
 use anyhow::{Ok, Result};
 use arrow::datatypes::SchemaRef;
-use datafusion::arrow::array::{ArrayRef, BooleanArray, Int64Array, StringArray};
+use datafusion::arrow::array::{
+    ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, StringArray, UInt64Array,
+};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::TableProvider;
@@ -31,8 +33,8 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
 
     // create table
     // use arrow schema & arrow array to create table
-    pub async fn create_table(&self, s: SchemaRef, cols: Vec<ArrayRef>) -> Result<()> {
-        let empty_batch = RecordBatch::try_new(s.clone(), cols)?;
+    pub async fn create_table(&self, s: SchemaRef) -> Result<()> {
+        let empty_batch = RecordBatch::try_new(s.clone(), create_empty_columns(&s))?;
 
         let context = self.ctx.write().await;
         context.register_batch(&self.id, empty_batch)?;
@@ -86,6 +88,28 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
     }
 }
 
+fn create_empty_columns(schema: &SchemaRef) -> Vec<ArrayRef> {
+    schema
+        .fields()
+        .iter()
+        .map(|field| match field.data_type() {
+            DataType::Boolean => {
+                Arc::new(BooleanArray::from(Vec::<Option<bool>>::new())) as ArrayRef
+            }
+            DataType::Int32 => Arc::new(Int32Array::from(Vec::<Option<i32>>::new())) as ArrayRef,
+            DataType::Int64 => Arc::new(Int64Array::from(Vec::<Option<i64>>::new())) as ArrayRef,
+            DataType::UInt64 => Arc::new(UInt64Array::from(Vec::<Option<u64>>::new())) as ArrayRef,
+            DataType::Float64 => {
+                Arc::new(Float64Array::from(Vec::<Option<f64>>::new())) as ArrayRef
+            }
+
+            DataType::Utf8 => Arc::new(StringArray::from(Vec::<Option<&str>>::new())) as ArrayRef,
+            // 可以根据需要添加更多数据类型的处理
+            _ => panic!("Unsupported data type: {:?}", field.data_type()),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,15 +142,7 @@ mod tests {
             Field::new("timestamp", DataType::Int64, false),
             Field::new("is_deleted", DataType::Boolean, false),
         ]));
-
-        let cols: Vec<ArrayRef> = vec![
-            Arc::new(StringArray::from(vec![""])) as ArrayRef,
-            Arc::new(StringArray::from(vec![""])) as ArrayRef,
-            Arc::new(Int64Array::from(vec![0])) as ArrayRef,
-            Arc::new(BooleanArray::from(vec![false])) as ArrayRef,
-        ];
-
-        db.create_table(schema, cols).await?;
+        db.create_table(schema).await?;
 
         // Insert data
         db.insert("INSERT INTO test_table VALUES ('key1', 'value1', 1234567890, false)")
@@ -154,14 +170,7 @@ mod tests {
             Field::new("is_deleted", DataType::Boolean, false),
         ]));
 
-        let cols: Vec<ArrayRef> = vec![
-            Arc::new(StringArray::from(vec![""])) as ArrayRef,
-            Arc::new(StringArray::from(vec![""])) as ArrayRef,
-            Arc::new(Int64Array::from(vec![0])) as ArrayRef,
-            Arc::new(BooleanArray::from(vec![false])) as ArrayRef,
-        ];
-
-        db.create_table(schema, cols).await?;
+        db.create_table(schema).await?;
 
         // Insert data
         db.insert("INSERT INTO test_table VALUES ('key1', 'value1', 1234567890, false)")
