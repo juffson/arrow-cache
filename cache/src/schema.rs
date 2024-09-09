@@ -37,8 +37,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_from_proto() {
         let pool = DescriptorPool::new();
-        let file_descriptor_set = include_bytes!("path/to/your/compiled.proto.bin");
-        pool.add_file_descriptor_set(file_descriptor_set).unwrap();
+        //let file_descriptor_set = include_bytes!("path/to/your/compiled.proto.bin");
+        // pool.add_file_descriptor_set(file_descriptor_set).unwrap();
 
         let message_descriptor = pool.get_message_by_name("TradeData").unwrap();
         let schema = create_schema_from_proto(&message_descriptor);

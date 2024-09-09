@@ -9,6 +9,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::TableProvider;
 use datafusion::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -59,10 +60,36 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
 
     pub async fn query(&self, sql: &str) -> Result<DataFrame> {
         let context = self.ctx.read().await;
-        context
+        let df = context
             .sql(sql)
             .await
-            .map_err(|e| anyhow::anyhow!("Query error: {}", e))
+            .map_err(|e| anyhow::anyhow!("Query error: {}", e));
+        df
+    }
+
+    pub async fn query_to_schema(&self, sql: &str) -> Result<Vec<V>> {
+        let batches = self.query_to_batches(sql).await?;
+        let mut results = Vec::new();
+
+        for batch in batches {
+            let schema = batch.schema();
+            let num_rows = batch.num_rows();
+
+            for row_index in 0..num_rows {
+                let mut row_obj = serde_json::Map::new();
+
+                for (col_index, field) in schema.fields().iter().enumerate() {
+                    let column = batch.column(col_index);
+                    let value = get_value_at(column, row_index)?;
+                    row_obj.insert(field.name().clone(), value);
+                }
+
+                let row_value = Value::Object(row_obj);
+                let row_struct: V = serde_json::from_value(row_value)?;
+                results.push(row_struct);
+            }
+        }
+        Ok(results)
     }
 
     pub async fn query_to_batches(&self, sql: &str) -> Result<Vec<RecordBatch>> {
@@ -108,6 +135,66 @@ fn create_empty_columns(schema: &SchemaRef) -> Vec<ArrayRef> {
             _ => panic!("Unsupported data type: {:?}", field.data_type()),
         })
         .collect()
+}
+
+fn get_value_at(column: &ArrayRef, index: usize) -> Result<Value> {
+    Ok(match column.data_type() {
+        DataType::Boolean => Value::Bool(
+            column
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .unwrap()
+                .value(index),
+        ),
+        DataType::Int32 => Value::Number(
+            column
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .unwrap()
+                .value(index)
+                .into(),
+        ),
+        DataType::Int64 => Value::Number(
+            column
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap()
+                .value(index)
+                .into(),
+        ),
+        DataType::UInt64 => Value::Number(
+            column
+                .as_any()
+                .downcast_ref::<UInt64Array>()
+                .unwrap()
+                .value(index)
+                .into(),
+        ),
+        DataType::Float64 => {
+            let float_val = column
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .unwrap()
+                .value(index);
+            serde_json::Number::from_f64(float_val)
+                .map(Value::Number)
+                .unwrap_or(Value::Null)
+        }
+        DataType::Utf8 => Value::String(
+            column
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .value(index)
+                .to_string(),
+        ),
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unsupported data type: {:?}",
+                column.data_type()
+            ))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -185,6 +272,84 @@ mod tests {
         for batch in batches {
             println!("Batch: {:?}", batch);
         }
+
+        Ok(())
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    struct TestUser {
+        id: i64,
+        name: String,
+        age: i32,
+    }
+
+    #[tokio::test]
+    async fn test_query_to_schema() -> Result<()> {
+        // 创建一个新的 DB 实例
+        let db = DB::<TestUser>::new("test_db");
+
+        // 创建一个临时表
+        db.execute("CREATE TABLE test_users (id BIGINT, name VARCHAR, age INT)")
+            .await?;
+
+        // 插入测试数据
+        db.execute("INSERT INTO test_users (id, name, age) VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35)")
+        .await?;
+
+        // 使用 query_to_schema 方法查询数据
+        let results: Vec<TestUser> = db
+            .query_to_schema("SELECT * FROM test_users ORDER BY id")
+            .await?;
+
+        // 验证结果
+        let expected = vec![
+            TestUser {
+                id: 1,
+                name: "Alice".to_string(),
+                age: 30,
+            },
+            TestUser {
+                id: 2,
+                name: "Bob".to_string(),
+                age: 25,
+            },
+            TestUser {
+                id: 3,
+                name: "Charlie".to_string(),
+                age: 35,
+            },
+        ];
+
+        assert_eq!(
+            results, expected,
+            "Query results do not match expected data"
+        );
+
+        // 测试部分查询
+        let partial_results: Vec<TestUser> = db
+            .query_to_schema("SELECT id, name, age FROM test_users WHERE age > 25 ORDER BY id")
+            .await?;
+
+        let expected_partial = vec![
+            TestUser {
+                id: 1,
+                name: "Alice".to_string(),
+                age: 30,
+            },
+            TestUser {
+                id: 3,
+                name: "Charlie".to_string(),
+                age: 35,
+            },
+        ];
+
+        assert_eq!(
+            partial_results, expected_partial,
+            "Partial query results do not match expected data"
+        );
+
+        // 清理：删除测试表
+        db.execute("DROP TABLE test_users").await?;
 
         Ok(())
     }
