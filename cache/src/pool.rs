@@ -10,6 +10,7 @@ use datafusion::datasource::TableProvider;
 use datafusion::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -90,6 +91,30 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
             }
         }
         Ok(results)
+    }
+
+    pub async fn query_to_json(&self, sql: &str) -> anyhow::Result<serde_json::Value> {
+        let batches = self.query_to_batches(sql).await?;
+        for batch in batches {
+            let schema = batch.schema();
+            let num_rows = batch.num_rows();
+
+            for row_index in 0..num_rows {
+                let mut row_obj = serde_json::Map::new();
+
+                for (col_index, field) in schema.fields().iter().enumerate() {
+                    let column = batch.column(col_index);
+                    let value = get_value_at(column, row_index)?;
+                    row_obj.insert(field.name().clone(), value);
+                }
+
+                let row_value = Value::Object(row_obj);
+                let row_struct: V = serde_json::from_value(row_value)?;
+
+                return Ok(serde_json::to_value(row_struct)?);
+            }
+        }
+        Ok(serde_json::Value::Null)
     }
 
     pub async fn query_to_batches(&self, sql: &str) -> Result<Vec<RecordBatch>> {
