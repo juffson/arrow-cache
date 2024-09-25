@@ -1,16 +1,14 @@
 use crate::ck::ClickHouseTableProvider;
 use anyhow::{Ok, Result};
-use arrow::datatypes::SchemaRef;
+use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::array::{
     ArrayRef, BooleanArray, Float64Array, Int32Array, Int64Array, StringArray, UInt64Array,
 };
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::TableProvider;
 use datafusion::prelude::*;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;

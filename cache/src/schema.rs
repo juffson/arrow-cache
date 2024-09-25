@@ -1,5 +1,32 @@
 use arrow::datatypes::{DataType, Field, Schema};
 use prost_reflect::{DescriptorPool, MessageDescriptor};
+use std::path::Path;
+fn create_schema_from_proto_file(
+    proto_file: &Path,
+    message_name: &str,
+) -> Result<Schema, Box<dyn std::error::Error>> {
+    // 创建一个临时目录来存储生成的代码
+    let out_dir = tempfile::tempdir()?;
+
+    // 使用 prost-build 编译 .proto 文件
+    let mut config = prost_build::Config::new();
+    config.file_descriptor_set_path(out_dir.path().join("descriptor.bin"));
+    config.compile_protos(&[proto_file], &[proto_file.parent().unwrap()])?;
+
+    // 读取生成的文件描述符集
+    let descriptor_bytes = std::fs::read(out_dir.path().join("descriptor.bin"))?;
+
+    // 创建 DescriptorPool 并添加文件描述符集
+    let pool = DescriptorPool::decode(descriptor_bytes.as_slice())?;
+
+    // 获取指定消息的描述符
+    let message_descriptor = pool
+        .get_message_by_name(message_name)
+        .ok_or_else(|| format!("Message '{}' not found in proto file", message_name))?;
+
+    // 使用之前的函数创建 Schema
+    Ok(create_schema_from_proto(&message_descriptor))
+}
 
 fn create_schema_from_proto(proto_descriptor: &MessageDescriptor) -> Schema {
     let fields: Vec<Field> = proto_descriptor
