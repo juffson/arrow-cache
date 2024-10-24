@@ -41,12 +41,8 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
         Ok(())
     }
 
-    pub async fn create_table_with_provider(
-        &self,
-        s: SchemaRef,
-        cols: Vec<ArrayRef>,
-    ) -> Result<()> {
-        let empty_batch = RecordBatch::try_new(s.clone(), cols)?;
+    pub async fn create_table_with_provider(&self, s: SchemaRef) -> Result<()> {
+        let empty_batch = RecordBatch::try_new(s.clone(), create_empty_columns(&s))?;
         let context = self.ctx.write().await;
         context.register_batch(&self.id, empty_batch)?;
         // read from source
@@ -374,6 +370,19 @@ mod tests {
         // 清理：删除测试表
         db.execute("DROP TABLE test_users").await?;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_table_with_provider() -> Result<()> {
+        let db = DB::<TestUser>::new("test_db");
+        // Create table
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("timestamp", DataType::Int64, false),
+            Field::new("is_deleted", DataType::Boolean, false),
+        ]));
+        db.create_table_with_provider(schema).await.unwrap();
         Ok(())
     }
 }
