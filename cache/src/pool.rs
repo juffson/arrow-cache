@@ -128,6 +128,12 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
         Ok(())
     }
 
+    pub async fn truncate(&self) -> Result<()> {
+        //let c = self.ctx.write().await;
+        // TODO support truncate
+        Ok(())
+    }
+
     pub async fn recovery(&self) -> Result<()> {
         // TODO recovery from clickhouse/wal
         Ok(())
