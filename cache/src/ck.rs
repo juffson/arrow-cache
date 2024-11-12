@@ -134,7 +134,7 @@ impl ExecutionPlan for ClickHouseExecutionPlan {
         vec![] // 没有子计划，所以返回空向量
     }
 
-    fn required_input_ordering(&self) -> Vec<Option<Vec<PhysicalSortRequirement>>> {
+    fn required_input_ordering(&self) -> Vec<Option<datafusion::physical_expr::LexRequirement>> {
         vec![] // 没有子计划，所以返回空向量
     }
 

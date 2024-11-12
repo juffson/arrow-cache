@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(30);
+
 pub struct DB<V: Serialize + DeserializeOwned + Send + Sync> {
     pub id: String,
     ctx: Arc<RwLock<SessionContext>>,
