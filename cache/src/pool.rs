@@ -17,7 +17,7 @@ const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct DB<V: Serialize + DeserializeOwned + Send + Sync> {
     pub id: String,
-    ctx: Arc<RwLock<SessionContext>>,
+    ctx: SessionContext,
     _phantom: std::marker::PhantomData<V>,
     sync_interval: Duration,
 }
@@ -26,7 +26,7 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
     pub fn new(id: &str) -> Self {
         Self {
             id: id.to_string(),
-            ctx: Arc::new(RwLock::new(SessionContext::new())),
+            ctx: SessionContext::new(),
             _phantom: std::marker::PhantomData,
             sync_interval: DEFAULT_SYNC_INTERVAL,
         }
@@ -36,31 +36,23 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
     // use arrow schema & arrow array to create table
     pub async fn create_table(&self, s: SchemaRef) -> Result<()> {
         let empty_batch = RecordBatch::try_new(s.clone(), create_empty_columns(&s))?;
-
-        let context = self.ctx.write().await;
-        context.register_batch(&self.id, empty_batch)?;
+        self.ctx.register_batch(&self.id, empty_batch)?;
         Ok(())
     }
 
     pub async fn create_table_with_provider(&self, s: SchemaRef) -> Result<()> {
         let empty_batch = RecordBatch::try_new(s.clone(), create_empty_columns(&s))?;
-        let context = self.ctx.write().await;
-        context.register_batch(&self.id, empty_batch)?;
-        // read from source
-        // TODO support clickhouse
+        self.ctx.register_batch(&self.id, empty_batch)?;
         let provider = Arc::new(ClickHouseTableProvider::new()) as Arc<dyn TableProvider>;
-        // not sync data
-        let _ = context.read_table(provider)?;
+        let _ = self.ctx.read_table(provider)?;
         Ok(())
     }
 
     pub async fn query(&self, sql: &str) -> Result<DataFrame> {
-        let context = self.ctx.read().await;
-        let df = context
+        self.ctx
             .sql(sql)
             .await
-            .map_err(|e| anyhow::anyhow!("Query error: {}", e));
-        df
+            .map_err(|e| anyhow::anyhow!("Query error: {}", e))
     }
 
     pub async fn query_to_schema(&self, sql: &str) -> Result<Vec<V>> {
@@ -124,8 +116,7 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
     }
 
     pub async fn execute(&self, sql: &str) -> Result<()> {
-        let context = self.ctx.write().await;
-        context.sql(sql).await?.collect().await?;
+        self.ctx.sql(sql).await?.collect().await?;
         Ok(())
     }
 
@@ -390,6 +381,37 @@ mod tests {
             Field::new("is_deleted", DataType::Boolean, false),
         ]));
         db.create_table_with_provider(schema).await.unwrap();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn context_with_threads() -> Result<()> {
+        let db = DB::<TestUser>::new("test_db");
+
+        // Create a schema and table first
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("c1", DataType::Int32, false),
+            Field::new("c2", DataType::Utf8, false),
+        ]));
+        db.create_table(schema).await?;
+        db.execute("INSERT INTO test_db VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+            .await?;
+
+        let db_ref = Arc::new(db);
+        let threads: Vec<_> = (0..3)
+            .map(|_| db_ref.clone())
+            .map(|db| {
+                tokio::spawn(async move {
+                    db.query("SELECT c1, c2 FROM test_db WHERE c1 > 0 AND c1 < 3")
+                        .await
+                })
+            })
+            .collect();
+
+        for handle in threads {
+            handle.await.unwrap()?;
+        }
+
         Ok(())
     }
 }
