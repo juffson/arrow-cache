@@ -11,18 +11,17 @@ use object_store::ObjectStore;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(30);
 
 pub struct DB<V: Serialize + DeserializeOwned + Send + Sync> {
     pub id: String,
-    ctx: SessionContext,
+    pub ctx: SessionContext,
     _phantom: std::marker::PhantomData<V>,
     sync_interval: Duration,
-    registered_storages: RwLock<HashMap<String, Arc<dyn ObjectStore>>>,
+    pub registered_storages: RwLock<HashMap<String, Arc<dyn ObjectStore>>>,
 }
 
 impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
