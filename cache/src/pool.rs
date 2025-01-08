@@ -7,8 +7,10 @@ use datafusion::arrow::array::{
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::TableProvider;
 use datafusion::prelude::*;
+use object_store::ObjectStore;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
@@ -20,6 +22,7 @@ pub struct DB<V: Serialize + DeserializeOwned + Send + Sync> {
     ctx: SessionContext,
     _phantom: std::marker::PhantomData<V>,
     sync_interval: Duration,
+    registered_storages: RwLock<HashMap<String, Arc<dyn ObjectStore>>>,
 }
 
 impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
@@ -29,6 +32,7 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
             ctx: SessionContext::new(),
             _phantom: std::marker::PhantomData,
             sync_interval: DEFAULT_SYNC_INTERVAL,
+            registered_storages: RwLock::new(HashMap::new()),
         }
     }
 
@@ -237,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_and_insert() -> Result<()> {
-        let db = DB::<CustomValue>::new("test_table");
+        let db: DB<CustomValue> = DB::<CustomValue>::new("test_table");
 
         // Create table
         let schema = Arc::new(Schema::new(vec![
