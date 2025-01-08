@@ -72,6 +72,7 @@ mod tests {
         env::set_var("APP__STORAGES__s3__BUCKET", "test-bucket");
 
         let config = Config::from_env().unwrap();
+        println!("{:?}", config);
         assert_eq!(config.storages.len(), 1);
 
         let s3_config = config.storages.get("s3").unwrap();

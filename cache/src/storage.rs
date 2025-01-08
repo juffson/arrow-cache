@@ -1,6 +1,8 @@
 use crate::config::Config;
+use crate::config::StorageConfig;
 use crate::pool::DB;
 use datafusion::execution::context::SessionContext;
+use datafusion::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -20,6 +22,7 @@ impl DB<()> {
             .with_bucket_name(&config.bucket)
             .with_region(&config.region);
 
+        // ALIYUN OSS 必须使用 virtual_hosted_style_request
         let object_store = if let Some(endpoint) = &config.endpoint {
             object_store
                 .with_endpoint(endpoint)
@@ -32,7 +35,6 @@ impl DB<()> {
 
         let object_store = Arc::new(object_store);
         let url = Url::parse(&format!("s3://{}", config.bucket))?;
-
         self.ctx.register_object_store(&url, object_store.clone());
 
         let mut storages = self.registered_storages.write().unwrap();
