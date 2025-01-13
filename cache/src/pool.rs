@@ -1,4 +1,5 @@
 use crate::ck::ClickHouseTableProvider;
+use crate::config::StorageConfig;
 use anyhow::{Ok, Result};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::array::{
@@ -16,12 +17,17 @@ use std::time::Duration;
 
 const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(30);
 
+pub struct StorageEntry {
+    pub store: Arc<dyn ObjectStore>,
+    pub config: StorageConfig,
+}
+
 pub struct DB<V: Serialize + DeserializeOwned + Send + Sync> {
     pub id: String,
     pub ctx: SessionContext,
     _phantom: std::marker::PhantomData<V>,
     sync_interval: Duration,
-    pub registered_storages: RwLock<HashMap<String, Arc<dyn ObjectStore>>>,
+    pub registered_storages: RwLock<HashMap<String, StorageEntry>>,
 }
 
 impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {

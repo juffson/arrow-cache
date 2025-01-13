@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct StorageConfig {
-    pub access_key_id: String,
-    pub secret_access_key: String,
+    pub access_key: String,
+    pub access_secret: String,
     pub endpoint: Option<String>,
     pub region: String,
     pub bucket: String,
@@ -68,22 +68,22 @@ mod tests {
     #[test]
     fn test_from_env() {
         // 设置测试环境变量
-        env::set_var("APP__STORAGES__s3__ACCESS_KEY_ID", "test_key");
-        env::set_var("APP__STORAGES__s3__SECRET_ACCESS_KEY", "test_secret");
+        env::set_var("APP__STORAGES__s3__ACCESS_KEY", "test_key");
+        env::set_var("APP__STORAGES__s3__ACCESS_SECRET", "test_secret");
         env::set_var("APP__STORAGES__s3__REGION", "us-east-1");
         env::set_var("APP__STORAGES__s3__BUCKET", "test-bucket");
-
+        env::set_var("APP__STORAGES__s3__SCHEMA", "s3");
         let config = Config::from_env().unwrap();
         println!("{:?}", config);
         assert_eq!(config.storages.len(), 1);
 
         let s3_config = config.storages.get("s3").unwrap();
-        assert_eq!(s3_config.access_key_id, "test_key");
+        assert_eq!(s3_config.access_key, "test_key");
         assert_eq!(s3_config.bucket, "test-bucket");
 
         // 清理环境变量
-        env::remove_var("APP__STORAGES__s3__ACCESS_KEY_ID");
-        env::remove_var("APP__STORAGES__s3__SECRET_ACCESS_KEY");
+        env::remove_var("APP__STORAGES__s3__ACCESS_KEY");
+        env::remove_var("APP__STORAGES__s3__ACCESS_SECRET");
         env::remove_var("APP__STORAGES__s3__REGION");
         env::remove_var("APP__STORAGES__s3__BUCKET");
     }
