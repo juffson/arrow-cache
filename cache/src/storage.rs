@@ -64,12 +64,16 @@ impl DB<()> {
         path: &str,
         format: &str,
     ) -> anyhow::Result<()> {
-        let storages = self.registered_storages.read().unwrap();
-        let storage = storages.get(storage_name).context("get storage")?;
-        let location = format!(
-            "{}://{}/{}",
-            storage.config.schema, storage.config.bucket, path
-        );
+        let (schema, bucket, path) = {
+            let storages = self.registered_storages.read().unwrap();
+            let storage = storages.get(storage_name).context("get storage")?;
+            (
+                storage.config.schema.clone(),
+                storage.config.bucket.clone(),
+                path,
+            )
+        };
+        let location = format!("{}://{}/{}", schema, bucket, path);
         println!("export to storage: {}", location);
 
         match format.to_lowercase().as_str() {
