@@ -1,4 +1,5 @@
 use crate::ck::ClickHouseTableProvider;
+use crate::config::StorageConfig;
 use anyhow::{Ok, Result};
 use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::array::{
@@ -7,19 +8,26 @@ use datafusion::arrow::array::{
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::TableProvider;
 use datafusion::prelude::*;
+use object_store::ObjectStore;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::RwLock;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 const DEFAULT_SYNC_INTERVAL: Duration = Duration::from_secs(30);
 
+pub struct StorageEntry {
+    pub store: Arc<dyn ObjectStore>,
+    pub config: StorageConfig,
+}
+
 pub struct DB<V: Serialize + DeserializeOwned + Send + Sync> {
     pub id: String,
-    ctx: SessionContext,
+    pub ctx: SessionContext,
     _phantom: std::marker::PhantomData<V>,
     sync_interval: Duration,
+    pub registered_storages: RwLock<HashMap<String, StorageEntry>>,
 }
 
 impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
@@ -29,6 +37,7 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
             ctx: SessionContext::new(),
             _phantom: std::marker::PhantomData,
             sync_interval: DEFAULT_SYNC_INTERVAL,
+            registered_storages: RwLock::new(HashMap::new()),
         }
     }
 
@@ -237,7 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_and_insert() -> Result<()> {
-        let db = DB::<CustomValue>::new("test_table");
+        let db: DB<CustomValue> = DB::<CustomValue>::new("test_table");
 
         // Create table
         let schema = Arc::new(Schema::new(vec![
