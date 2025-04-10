@@ -1,10 +1,10 @@
 [package]
 name = "cache"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-datafusion = "43.0.0"
+datafusion = "46.0.0"
 async-trait = "0.1.75"
 anyhow = "1.0.69"
 tokio = { version = "1", features = ["full"] }
@@ -15,8 +15,8 @@ prost-reflect = { version = "0.14.0", features = ["serde"] }
 prost-build = "0.13.3"
 clickhouse-rs = { git = "https://github.com/suharev7/clickhouse-rs.git", branch = "async-await" }
 futures = "0.3.30"
-arrow = "53.0.0"
+arrow = "54.0.0"
 tempfile = "3.3.0"
-arrow-schema = "53.0.0"
+arrow-schema = "54.0.0"
 config = "0.15.4"
 object_store = { version = "0.11.2", features = ["aws"] }
