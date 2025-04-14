@@ -1,19 +1,21 @@
 use std::any::Any;
 use std::collections::BTreeMap; // BTreeMap 可以保持分区有序
 
-use std::sync::{Arc, Mutex, RwLock}; // 需要线程安全访问
-
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
-use datafusion::catalog::{Session, TableProvider, TableProviderFactory};
-use datafusion::datasource::{TableType};
-use datafusion::error::DataFusionError;
-use datafusion::logical_expr::CreateExternalTable;
-use datafusion::datasource::memory::MemorySourceConfig;
-use datafusion::logical_expr::{Expr};
-use datafusion::physical_plan::memory::LazyMemoryExec;
-use datafusion::datasource::memory::MemTable;
-use datafusion::physical_plan::ExecutionPlan;
+use datafusion::{
+    catalog::{Session, TableProviderFactory},
+    datasource::{TableProvider, TableType, memory::MemorySourceConfig},
+    error::DataFusionError,
+    execution::{SendableRecordBatchStream, TaskContext},
+    logical_expr::{CreateExternalTable, Expr, dml::InsertOp},
+    physical_plan::{
+        DisplayAs, DisplayFormatType, ExecutionPlan,
+        insert::{DataSink, DataSinkExec},
+    },
+};
+use futures::StreamExt;
+use std::sync::{Arc, Mutex, RwLock}; // 需要线程安全访问
 
 // 定义分区键的类型，这里用 String 举例，可以是日期、类别等
 type PartitionKey = String;
@@ -25,13 +27,38 @@ pub struct PartitionedMemTable {
     // 使用 RwLock 允许多读单写
     // BTreeMap 的 Key 是分区标识，Value 是该分区对应的 RecordBatch 列表
     partitions: Arc<RwLock<BTreeMap<PartitionKey, Vec<RecordBatch>>>>,
+    pub partition_key: String,
+}
+
+#[derive(Clone)]
+pub struct PartitionedMemTableSink {
+    m: PartitionedMemTable,
+}
+
+impl PartitionedMemTableSink {
+    fn new(m: PartitionedMemTable) -> Self {
+        return Self { m };
+    }
+}
+
+impl std::fmt::Debug for PartitionedMemTableSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "partitioned mem table sink")
+    }
+}
+
+impl DisplayAs for PartitionedMemTableSink {
+    fn fmt_as(&self, t: DisplayFormatType, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "partitioned mem table sink")
+    }
 }
 
 impl PartitionedMemTable {
-    pub fn new(schema: SchemaRef) -> Self {
+    pub fn new(schema: SchemaRef, partition_key: String) -> Self {
         Self {
             schema,
             partitions: Arc::new(RwLock::new(BTreeMap::new())),
+            partition_key,
         }
     }
 
@@ -53,7 +80,7 @@ impl PartitionedMemTable {
     pub fn drop_partition(
         &self,
         key: &PartitionKey,
-    ) -> Result<Option<Vec<RecordBatch>>, DataFusionError> {
+    ) -> Result<Option<Vec<RecordBatch>>, anyhow::Error> {
         let mut partitions_guard = self.partitions.write().unwrap(); // 获取写锁
         Ok(partitions_guard.remove(key))
     }
@@ -95,8 +122,6 @@ impl TableProvider for PartitionedMemTable {
             batches_to_scan.extend(batches.clone());
         }
 
-
-
         // 如果没有数据，返回空的执行计划
         if batches_to_scan.is_empty() {
             return Ok(MemorySourceConfig::try_new_exec(
@@ -109,20 +134,30 @@ impl TableProvider for PartitionedMemTable {
         // 使用 MemoryExec 来执行内存数据的扫描
         // MemoryExec 需要一个 Vec<Vec<RecordBatch>>，外层 Vec 代表物理分区
         // 在这个简单例子里，我们只有一个物理分区包含所有数据
-        let exec = MemorySourceConfig::try_new_exec(&[batches_to_scan], self.schema(), projection.cloned())?;
+        let exec = MemorySourceConfig::try_new_exec(
+            &[batches_to_scan],
+            self.schema(),
+            projection.cloned(),
+        )?;
         Ok(exec)
     }
 
-    // DataFusion 暂未将 INSERT/DELETE/UPDATE 直接路由到 TableProvider 的特定方法
-    // 这些操作通常需要更复杂的事务和状态管理，或者通过特定的执行节点处理。
-    // 对于内存表，插入通常是通过 register_batch / register_partitions 实现，
-    // 或者像我们这样，通过自定义方法 `insert_partition`。
-
-    // fn supports_filter_pushdown(...) -> 可以告知 DataFusion 哪些 Filter 可以下推处理
-
-    // fn supports_update(...) / fn supports_delete(...) -> 可以声明是否支持更新/删除，
-    // 但需要实现对应的 Physical Plan 节点来处理，这比较复杂。
-    // 对于你的场景，drop_partition 是在 TableProvider 外部调用的管理操作。
+    // --- Implementation for INSERT INTO ---
+    async fn insert_into(
+        &self,
+        state: &dyn Session,
+        input: Arc<dyn ExecutionPlan>, // This plan represents the data from VALUES/SELECT
+        insert_op: InsertOp,
+    ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
+        Ok(Arc::new(DataSinkExec::new(
+            input,
+            Arc::new(PartitionedMemTableSink::new(PartitionedMemTable::new(
+                self.schema(),
+                self.partition_key.clone(),
+            ))),
+            None,
+        )) as _)
+    }
 }
 
 #[derive(Debug, Default)] // Default is handy for simple factories
@@ -140,6 +175,10 @@ impl TableProviderFactory for PartitionedMemTableFactory {
         let schema = Arc::new(cmd.schema.as_ref().clone());
         let s = schema.as_arrow();
 
+        // 假设一定有 partition
+        let partition: Vec<String> = cmd.table_partition_cols.clone();
+        let partition_key = partition.first().unwrap().to_string();
+
         // 2. Optionally use LOCATION or other parameters if needed
         // For this simple case, we might not need LOCATION if the table name itself is sufficient
         // let location = &cmd.location;
@@ -147,7 +186,7 @@ impl TableProviderFactory for PartitionedMemTableFactory {
         // e.g., location = "partitioned_mem://my_table?ttl=3600"
 
         // 3. Create your custom TableProvider instance
-        let table_provider = Arc::new(PartitionedMemTable::new(Arc::new(s.clone())));
+        let table_provider = Arc::new(PartitionedMemTable::new(Arc::new(s.clone()), partition_key));
 
         // 4. Optional: Start the background cleanup task if you implemented it
         // You might need access to the Tokio runtime handle or pass config via SessionState
@@ -158,14 +197,53 @@ impl TableProviderFactory for PartitionedMemTableFactory {
     }
 }
 
+#[async_trait::async_trait]
+impl DataSink for PartitionedMemTableSink {
+    fn schema(&self) -> &SchemaRef {
+        return &self.m.schema;
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn metrics(&self) -> Option<datafusion::physical_plan::metrics::MetricsSet> {
+        None
+    } // Or implement metrics
+
+    // This method consumes the stream produced by the input plan
+    async fn write_all(
+        &self,
+        mut stream: SendableRecordBatchStream,
+        _context: &Arc<TaskContext>, // Context is available if needed
+    ) -> datafusion::error::Result<u64> {
+        let mut rows_inserted: u64 = 0;
+
+        while let Some(batch_result) = stream.next().await {
+            let batch = batch_result?;
+            if batch.num_rows() == 0 {
+                continue;
+            }
+            let num_rows = batch.num_rows() as u64;
+
+            // Logic to insert batch into the target table
+            let partition_key = "2025-11-21".to_string();
+            self.m.insert_partition(partition_key, batch).unwrap();
+
+            rows_inserted += num_rows;
+        }
+        Ok(rows_inserted) // Return the number of rows inserted
+    }
+}
+
 mod tests {
     use super::*;
-    use arrow::array::{Int32Array,StringArray, TimestampNanosecondArray};
+    use arrow::array::{Int32Array, StringArray, TimestampNanosecondArray};
     use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
     use arrow::record_batch::RecordBatch;
+    use datafusion::execution::SessionStateBuilder;
     use datafusion::execution::context::SessionContext;
     use datafusion::execution::runtime_env::RuntimeEnv;
-    use datafusion::execution::SessionStateBuilder;
 
     use std::sync::Arc;
     #[tokio::test]
@@ -185,7 +263,7 @@ mod tests {
         ]));
 
         // 2. 创建自定义的 TableProvider 实例
-        let table_provider = Arc::new(PartitionedMemTable::new(schema.clone()));
+        let table_provider = Arc::new(PartitionedMemTable::new(schema.clone(), "dt".to_string()));
 
         // 3. 注册 TableProvider 到 DataFusion
         ctx.register_table("my_partitioned_table", table_provider.clone())?;
@@ -284,7 +362,6 @@ mod tests {
 
         let state = builder.build();
         let ctx = SessionContext::new_with_state(state);
-
 
         // 2. 执行 CREATE EXTERNAL TABLE SQL
         let create_sql = r#"
