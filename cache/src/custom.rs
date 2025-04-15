@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::collections::BTreeMap; // BTreeMap 可以保持分区有序
 
+use arrow::array::StringArray;
 use arrow::datatypes::SchemaRef;
 use arrow::record_batch::RecordBatch;
 use datafusion::{
@@ -37,7 +38,7 @@ pub struct PartitionedMemTableSink {
 
 impl PartitionedMemTableSink {
     fn new(m: PartitionedMemTable) -> Self {
-        return Self { m };
+        Self { m }
     }
 }
 
@@ -151,10 +152,7 @@ impl TableProvider for PartitionedMemTable {
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
         Ok(Arc::new(DataSinkExec::new(
             input,
-            Arc::new(PartitionedMemTableSink::new(PartitionedMemTable::new(
-                self.schema(),
-                self.partition_key.clone(),
-            ))),
+            Arc::new(PartitionedMemTableSink::new(self.clone())),
             None,
         )) as _)
     }
@@ -174,10 +172,12 @@ impl TableProviderFactory for PartitionedMemTableFactory {
         // DataFusion parses the schema defined in "CREATE EXTERNAL TABLE my_table (col1 INT, ...)"
         let schema = Arc::new(cmd.schema.as_ref().clone());
         let s = schema.as_arrow();
+        println!("function create schema: {:?}", s);
 
         // 假设一定有 partition
         let partition: Vec<String> = cmd.table_partition_cols.clone();
         let partition_key = partition.first().unwrap().to_string();
+        println!("function create partition_key: {:?}", partition_key);
 
         // 2. Optionally use LOCATION or other parameters if needed
         // For this simple case, we might not need LOCATION if the table name itself is sufficient
@@ -221,15 +221,34 @@ impl DataSink for PartitionedMemTableSink {
 
         while let Some(batch_result) = stream.next().await {
             let batch = batch_result?;
+            println!("write all: {:?}", batch.num_rows());
             if batch.num_rows() == 0 {
                 continue;
             }
+
+            // 一批数据的 partition 肯定是一样的，不允许写不同的 partition
+            let partition_array = batch
+                .column_by_name(self.m.partition_key.as_str())
+                .unwrap()
+                .clone();
+
+            let partition_key: PartitionKey = if let Some(string_array) =
+                partition_array.as_any().downcast_ref::<StringArray>()
+            {
+                string_array.value(0).to_string() // .value() is efficient for StringArray
+            } else {
+                return Err(DataFusionError::Execution(format!(
+                    "Partition key column '{}' in batch is not Utf8 (String)",
+                    self.m.partition_key
+                )));
+            };
+            println!("batch is: {:?}", batch.clone());
+
+            let partition_key = "tool".to_string();
             let num_rows = batch.num_rows() as u64;
-
             // Logic to insert batch into the target table
-            let partition_key = "2025-11-21".to_string();
             self.m.insert_partition(partition_key, batch).unwrap();
-
+            println!("inserted data: {:?}", self.m);
             rows_inserted += num_rows;
         }
         Ok(rows_inserted) // Return the number of rows inserted
@@ -244,6 +263,7 @@ mod tests {
     use datafusion::execution::SessionStateBuilder;
     use datafusion::execution::context::SessionContext;
     use datafusion::execution::runtime_env::RuntimeEnv;
+    use datafusion::functions_array::length;
 
     use std::sync::Arc;
     #[tokio::test]
@@ -371,6 +391,7 @@ mod tests {
                 part STRING
             )
             STORED AS mem
+            PARTITIONED BY (part)
             LOCATION 'mem://data'
         "#;
         ctx.sql(create_sql).await?.collect().await?;
@@ -383,6 +404,17 @@ mod tests {
         // 你可以进一步检查结果是否为 count = 0
 
         println!("Table 'my_dynamic_table' created successfully via SQL.");
+
+        let res = ctx
+            .sql(r#"INSERT INTO my_dynamic_table VALUES (1, 'bbbb', 'tool')"#)
+            .await?
+            .collect()
+            .await?;
+        println!("inserted data: {:?}", res.len());
+        let df_data = ctx
+            .sql("SELECT id, value, part FROM my_dynamic_table")
+            .await?;
+        df_data.show().await?; // Should show count = 3
 
         // 4. (可选) 获取 TableProvider 实例并插入数据
         let table_ref = ctx.table_provider("my_dynamic_table").await?;
@@ -416,6 +448,8 @@ mod tests {
             "Inserted data. Current partitions: {:?}",
             mem_table.get_partition_keys()
         );
+
+        println!("get_partition_keys: {:?}", mem_table.get_partition_keys());
 
         // 5. 查询验证数据
         let df_data = ctx.sql("SELECT count(*) FROM my_dynamic_table").await?;
