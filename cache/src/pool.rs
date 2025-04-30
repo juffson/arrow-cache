@@ -124,6 +124,111 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
         self.execute(sql).await
     }
 
+    pub async fn batch_insert_by_schema(&self, values: Vec<V>) -> Result<()> {
+        if values.is_empty() {
+            return Ok(());
+        }
+
+        // Convert the first value to JSON to get the schema
+        let first_value = serde_json::to_value(&values[0])?;
+        let mut fields = Vec::new();
+
+        if let Value::Object(map) = first_value {
+            for (key, value) in map {
+                let data_type = match value {
+                    Value::Bool(_) => DataType::Boolean,
+                    Value::Number(n) => {
+                        if n.is_i64() {
+                            DataType::Int64
+                        } else if n.is_u64() {
+                            DataType::UInt64
+                        } else {
+                            DataType::Float64
+                        }
+                    }
+                    Value::String(_) => DataType::Utf8,
+                    _ => continue, // Skip unsupported types
+                };
+                fields.push(Field::new(key, data_type, true));
+            }
+        }
+
+        let schema = Arc::new(Schema::new(fields));
+        let mut columns: Vec<Vec<Value>> = vec![Vec::new(); schema.fields().len()];
+
+        // Convert all values to columns
+        for value in values {
+            let value_json = serde_json::to_value(value)?;
+            if let Value::Object(map) = value_json {
+                for (i, field) in schema.fields().iter().enumerate() {
+                    let field_value = map.get(field.name()).cloned().unwrap_or(Value::Null);
+                    columns[i].push(field_value);
+                }
+            }
+        }
+
+        // Convert columns to Arrow arrays
+        let arrays: Vec<ArrayRef> = schema
+            .fields()
+            .iter()
+            .zip(columns)
+            .map(|(field, values)| match field.data_type() {
+                DataType::Boolean => Arc::new(BooleanArray::from(
+                    values
+                        .iter()
+                        .map(|v| match v {
+                            Value::Bool(b) => Some(*b),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                DataType::Int64 => Arc::new(Int64Array::from(
+                    values
+                        .iter()
+                        .map(|v| match v {
+                            Value::Number(n) => n.as_i64(),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                DataType::UInt64 => Arc::new(UInt64Array::from(
+                    values
+                        .iter()
+                        .map(|v| match v {
+                            Value::Number(n) => n.as_u64(),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                DataType::Float64 => Arc::new(Float64Array::from(
+                    values
+                        .iter()
+                        .map(|v| match v {
+                            Value::Number(n) => n.as_f64(),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                DataType::Utf8 => Arc::new(StringArray::from(
+                    values
+                        .iter()
+                        .map(|v| match v {
+                            Value::String(s) => Some(s.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                )) as ArrayRef,
+                _ => Arc::new(StringArray::from(Vec::<Option<&str>>::new())) as ArrayRef,
+            })
+            .collect();
+
+        // Create and register the batch
+        let batch = RecordBatch::try_new(schema.clone(), arrays)?;
+        self.ctx.register_batch(&self.id, batch)?;
+
+        Ok(())
+    }
+
     pub async fn execute(&self, sql: &str) -> Result<()> {
         self.ctx.sql(sql).await?.collect().await?;
         Ok(())
@@ -244,6 +349,13 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+    struct TestUser {
+        id: i64,
+        name: String,
+        age: i32,
+    }
+
     #[tokio::test]
     async fn test_create_and_insert() -> Result<()> {
         let db: DB<CustomValue> = DB::<CustomValue>::new("test_table");
@@ -300,13 +412,6 @@ mod tests {
         }
 
         Ok(())
-    }
-
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    struct TestUser {
-        id: i64,
-        name: String,
-        age: i32,
     }
 
     #[tokio::test]
@@ -420,6 +525,42 @@ mod tests {
         for handle in threads {
             handle.await.unwrap()?;
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_batch_insert_by_schema() -> Result<()> {
+        let db = DB::<TestUser>::new("test_db");
+
+        // Create test data
+        let users = vec![
+            TestUser {
+                id: 1,
+                name: "Alice".to_string(),
+                age: 30,
+            },
+            TestUser {
+                id: 2,
+                name: "Bob".to_string(),
+                age: 25,
+            },
+            TestUser {
+                id: 3,
+                name: "Charlie".to_string(),
+                age: 35,
+            },
+        ];
+
+        // Batch insert the users
+        db.batch_insert_by_schema(users.clone()).await?;
+
+        // Query and verify the results
+        let results: Vec<TestUser> = db
+            .query_to_schema("SELECT * FROM test_db ORDER BY id")
+            .await?;
+
+        assert_eq!(results, users, "Inserted data does not match expected data");
 
         Ok(())
     }
