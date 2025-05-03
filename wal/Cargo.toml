@@ -1,0 +1,15 @@
+[package]
+name = "wal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crc32c = "0.6.3"
+file-manager = { path = "../file-manager" }
+flume = "0.11.0"
+parking_lot = "0.12.1"
+tracing = { version = "0.1.36", optional = true }
+
+[dev-dependencies]
+fastrand = "2.0.1"
+tempfile = "3.3.0"
