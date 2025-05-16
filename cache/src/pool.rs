@@ -53,7 +53,8 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
         let empty_batch = RecordBatch::try_new(s.clone(), create_empty_columns(&s))?;
         self.ctx.register_batch(&self.id, empty_batch)?;
         let provider = Arc::new(ClickHouseTableProvider::new()) as Arc<dyn TableProvider>;
-        let _ = self.ctx.read_table(provider)?;
+        let df = self.ctx.read_table(provider)?;
+        let _ = df.collect().await?;
         Ok(())
     }
 
