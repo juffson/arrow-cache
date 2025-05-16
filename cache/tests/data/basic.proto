@@ -1,0 +1,18 @@
+syntax="proto3";
+
+package foo.bar;
+
+message Foo {
+    int64 id = 1;
+    string name = 2;
+}
+
+message Message1 {}
+
+message Message2 {
+  Message1 foo = 1;
+}
+
+message Message3 {
+  optional Message1 bar = 1;
+}

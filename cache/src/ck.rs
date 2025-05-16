@@ -9,7 +9,7 @@ use datafusion::execution::TaskContext;
 use datafusion::logical_expr::Expr;
 use datafusion::physical_expr::EquivalenceProperties;
 use datafusion::physical_expr::PhysicalSortRequirement;
-use datafusion::physical_plan::ExecutionMode;
+use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::Partitioning;
 use datafusion::physical_plan::{
     DisplayAs, Distribution, ExecutionPlan, PlanProperties, SendableRecordBatchStream,
@@ -83,11 +83,9 @@ impl ClickHouseExecutionPlan {
         // 设置 Partitioning，这里假设 ClickHouse 查询结果是单个分区
         let partitioning = Partitioning::UnknownPartitioning(1);
 
-        // 设置 ExecutionMode，这里假设是 ExecutionMode::Exec
-        let execution_mode = ExecutionMode::Unbounded;
 
         // 创建 PlanProperties
-        let properties = PlanProperties::new(eq_properties, partitioning, execution_mode);
+        let properties = PlanProperties::new(eq_properties, partitioning, EmissionType::Both, Boundedness::Unbounded { requires_infinite_memory: true });
 
         Self {
             schema,
@@ -170,11 +168,6 @@ impl DisplayAs for ClickHouseExecutionPlan {
                 writeln!(f, "ClickHouseExecutionPlan:")?;
                 writeln!(f, "  Schema: {:?}", self.schema)?;
                 writeln!(f, "  Partitioning: {:?}", self.properties.partitioning)?;
-                writeln!(
-                    f,
-                    "  Execution Mode: {:?}",
-                    self.properties.execution_mode()
-                )?;
                 writeln!(
                     f,
                     "  Output Ordering: {:?}",
