@@ -580,8 +580,13 @@ mod tests {
     #[tokio::test]
     async fn test_truncate() -> Result<()> {
         let mut db = DB::<TestUser>::new("test_db");
-        db.execute("CREATE TABLE test_db (id BIGINT, name VARCHAR, age INT)")
-            .await?;
+        // Create a schema and table first
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Int32, false),
+            Field::new("name", DataType::Utf8, false),
+            Field::new("age", DataType::Int32, false),
+        ]));
+        db.create_table(schema).await?;
         db.execute("INSERT INTO test_db (id, name, age) VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35)")
             .await?;
         db.truncate().await?;
