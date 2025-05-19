@@ -28,7 +28,6 @@ pub struct DB<V: Serialize + DeserializeOwned + Send + Sync> {
     _phantom: std::marker::PhantomData<V>,
     sync_interval: Duration,
     pub registered_storages: RwLock<HashMap<String, StorageEntry>>,
-    pub schema: Option<SchemaRef>,
 }
 
 impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
@@ -39,16 +38,14 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
             _phantom: std::marker::PhantomData,
             sync_interval: DEFAULT_SYNC_INTERVAL,
             registered_storages: RwLock::new(HashMap::new()),
-            schema: None,
         }
     }
 
     // create table
     // use arrow schema & arrow array to create table
-    pub async fn create_table(&mut self, s: SchemaRef) -> Result<()> {
+    pub async fn create_table(&self, s: SchemaRef) -> Result<()> {
         let empty_batch = RecordBatch::try_new(s.clone(), create_empty_columns(&s))?;
         self.ctx.register_batch(&self.id, empty_batch)?;
-        self.schema = Some(s);
         Ok(())
     }
 
@@ -237,18 +234,14 @@ impl<V: Serialize + DeserializeOwned + Send + Sync> DB<V> {
         Ok(())
     }
 
-    pub async fn truncate(&mut self) -> Result<()> {
+    pub async fn truncate(&self, schema: SchemaRef) -> Result<()> {
         //let c = self.ctx.write().await;
         // TODO support truncate
         // drop table
         let sql = format!("DROP TABLE {}", self.id);
         self.execute(&sql).await?;
         // create new
-        let schema = self.schema.as_ref();
-        match schema {
-            Some(s) => self.create_table(s.clone()).await?,
-            _ => return Err(anyhow::anyhow!("Schema not found")),
-        }
+        self.create_table(schema).await?;
         Ok(())
     }
 
@@ -512,7 +505,7 @@ mod tests {
 
     #[tokio::test]
     async fn context_with_threads() -> Result<()> {
-        let mut db = DB::<TestUser>::new("test_db");
+        let db = DB::<TestUser>::new("test_db");
 
         // Create a schema and table first
         let schema = Arc::new(Schema::new(vec![
@@ -586,10 +579,10 @@ mod tests {
             Field::new("name", DataType::Utf8, false),
             Field::new("age", DataType::Int32, false),
         ]));
-        db.create_table(schema).await?;
+        db.create_table(schema.clone()).await?;
         db.execute("INSERT INTO test_db (id, name, age) VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35)")
             .await?;
-        db.truncate().await?;
+        db.truncate(schema).await?;
         Ok(())
     }
 }
