@@ -363,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_and_insert() -> Result<()> {
-        let mut db: DB<CustomValue> = DB::<CustomValue>::new("test_table");
+        let db: DB<CustomValue> = DB::<CustomValue>::new("test_table");
 
         // Create table
         let schema = Arc::new(Schema::new(vec![
@@ -388,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query() -> Result<()> {
-        let mut db = DB::<CustomValue>::new("test_table");
+        let db = DB::<CustomValue>::new("test_table");
 
         // 创建表并插入一些数据
 
@@ -572,7 +572,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_truncate() -> Result<()> {
-        let mut db = DB::<TestUser>::new("test_db");
+        let db = DB::<TestUser>::new("test_db");
         // Create a schema and table first
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Int32, false),
@@ -582,7 +582,15 @@ mod tests {
         db.create_table(schema.clone()).await?;
         db.execute("INSERT INTO test_db (id, name, age) VALUES (1, 'Alice', 30), (2, 'Bob', 25), (3, 'Charlie', 35)")
             .await?;
+        println!("inserted data");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let df = db.query("SELECT * FROM test_db").await?;
+        let results = df.collect().await?;
+        println!("results: {:?}", results);
         db.truncate(schema).await?;
+        let df = db.query("SELECT * FROM test_db").await?;
+        let results = df.collect().await?;
+        println!("results: {:?}", results);
         Ok(())
     }
 }
